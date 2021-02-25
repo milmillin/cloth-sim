@@ -4,9 +4,13 @@
 
 namespace clothsim {
 
-MainUI::MainUI() : igl::opengl::glfw::imgui::ImGuiMenu(), meshLoaded(false) {}
+MainUI::MainUI()
+    : igl::opengl::glfw::imgui::ImGuiMenu(),
+      m_currentFrame(0),
+      m_isPlayingBack(false) {}
 
 MainUI::~MainUI() {
+  StopSimulation();
   while (!tasks.empty()) {
     tasks.front().second->join();
     tasks.pop_front();
@@ -15,6 +19,8 @@ MainUI::~MainUI() {
 
 void MainUI::init(igl::opengl::glfw::Viewer* _viewer) {
   igl::opengl::glfw::imgui::ImGuiMenu::init(_viewer);
+
+  viewer->core().is_animating = true;
 
   // Add other layers
   for (int layerID = 1; layerID < LayerId::Max; layerID++) {
@@ -73,87 +79,85 @@ void MainUI::draw_viewer_window() {
 void MainUI::draw_viewer_menu() {
   float w = ImGui::GetContentRegionAvailWidth();
   float p = ImGui::GetStyle().FramePadding.x;
-  if (ImGui::CollapsingHeader("Mesh", ImGuiTreeNodeFlags_DefaultOpen)) {
-    if (ImGui::Button("Load##Mesh", ImVec2((w - p) / 2.f, 0))) {
-      viewer->selected_data_index = LayerId::Mesh;
-      viewer->data().V.resize(0, 0);
-      viewer->data().F.resize(0, 0);
-      viewer->open_dialog_load_mesh();
-    }
-    ImGui::SameLine(0, p);
-    if (ImGui::Button("Save##Mesh", ImVec2((w - p) / 2.f, 0))) {
-      viewer->open_dialog_save_mesh();
-    }
-  }
-  if (meshLoaded) {
-    if (ImGui::CollapsingHeader("Voxelization",
-                                ImGuiTreeNodeFlags_DefaultOpen)) {
-      ImGui::Text("Minimum: (%.2lf, %.2lf, %.2lf)",
-                  meshInfo.minimum.x(),
-                  meshInfo.minimum.y(),
-                  meshInfo.minimum.z());
-      ImGui::Text("Maximum: (%.2lf, %.2lf, %.2lf)",
-                  meshInfo.maximum.x(),
-                  meshInfo.maximum.y(),
-                  meshInfo.maximum.z());
-      ImGui::Text("Size: (%.2lf, %.2lf, %.2lf)",
-                  meshInfo.size.x(),
-                  meshInfo.size.y(),
-                  meshInfo.size.z());
-      ImGui::Separator();
+  if (ImGui::CollapsingHeader("Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
+    ImGui::PushItemWidth(120.f);
+    ImGui::InputDouble("Waist Radius (m)", &settings.waistRadius, 0.001, 0.01);
+    ImGui::InputDouble("Length (m)", &settings.length, 0.001, 0.01);
+    ImGui::InputDouble("Grid Spacing (m)", &settings.gridSpacing, 0.001, 0.01);
+    ImGui::InputDouble("Timestep (s)", &settings.timeStep, 0.001, 0.01);
+    ImGui::InputDouble("kShear", &settings.kShear, 0.01, 0.1);
+    ImGui::PopItemWidth();
 
-      ImGui::PushItemWidth(120.f);
-      ImGui::InputDouble(
-          "Rod Diameter (m)", &voxelSettings.rodDiameter, 0.001, 0.01);
-      ImGui::InputDouble(
-          "Rod Clearance (m)", &voxelSettings.rodClearance, 0.0001, 0.001);
-      ImGui::InputDouble(
-          "Fitter Diameter (m)", &voxelSettings.fitterDiameter, 0.001, 0.01);
-      ImGui::InputDouble("Mount Diameter (m)",
-                         &voxelSettings.fitterMountDiameter,
-                         0.001,
-                         0.01);
-      ImGui::InputDouble("Screw Diameter (m)",
-                         &voxelSettings.fitterScrewDiameter,
-                         0.001,
-                         0.01);
-      ImGui::InputDouble("Grid Spacing for Type B (m)",
-                         &voxelSettings.gridSpacing,
-                         0.001,
-                         0.01);
-      ImGui::InputDouble(
-          "Voxel Size for CM (m)", &voxelSettings.voxelSize, 0.001, 0.01);
-      ImGui::InputDouble("Epsilon (m)", &voxelSettings.epsilon, 0.0001, 0.01);
-      if (ImGui::DragFloat2("Grab angle y, xz (degree)",
-                            voxelSettings.grabAngle.data(),
-                            1.f,
-                            -180.f,
-                            180.f)) {
-        DrawGrabDirection();
+    if (pipeline == nullptr || pipeline->IsReady()) {
+      if (ImGui::Button("Update Settings", ImVec2(w - p, 0))) {
+        Update();
       }
-      ImGui::DragFloat(
-          "Threshold Angle", &voxelSettings.thresholdAngle, 1, 0, 90);
-      ImGui::Checkbox("Find Best Contact", &voxelSettings.findBestContact);
-      ImGui::PopItemWidth();
-
-      if (voxelPipeline == nullptr || voxelPipeline->IsReady()) {
-        if (ImGui::Button("Update", ImVec2(w - p, 0))) {
-          UpdateVoxels();
+      if (ImGui::Button("Reset Simulation", ImVec2(w - p, 0))) {
+        ResetSimulation();
+      }
+      if (pipeline != nullptr) {
+        if (ImGui::Button("Step", ImVec2(w - p, 0))) {
+          SimulateOnce();
+        }
+        if (ImGui::Button("Step Forever", ImVec2(w - p, 0))) {
+          SimulateForever();
+        }
+      }
+    } else {
+      if (pipeline->IsRunning()) {
+        if (ImGui::Button("Stop", ImVec2(w - p, 0))) {
+          StopSimulation();
         }
       } else {
         ImGui::Text("Busy...");
       }
-      if (voxelPipeline != nullptr && voxelPipeline->IsReady()) {
-        if (ImGui::Button("Save DXF", ImVec2(w - p, 0))) {
-          SaveDXF();
+    }
+  }
+  if (pipeline != nullptr) {
+    if (ImGui::CollapsingHeader("Playback", ImGuiTreeNodeFlags_DefaultOpen)) {
+      ImGui::PushID("Playback");
+      ImGui::PushItemWidth(120.f);
+      ImGui::Text(
+          "Frame: %d of %d", m_currentFrame + 1, (int)pipeline->GetNumFrames());
+
+      if (!m_isPlayingBack) {
+        if (ImGui::Button("First")) {
+          m_currentFrame = 0;
+          Invalidate();
         }
-        if (ImGui::Button("Save Result", ImVec2(w - p, 0))) {
-          SaveResult();
+        ImGui::SameLine();
+        if (ImGui::Button("Prev")) {
+          int old = m_currentFrame.load();
+          if (old > 0) {
+            m_currentFrame.compare_exchange_weak(old, old - 1);
+          }
+          Invalidate();
         }
-        if (ImGui::Button("Save Gripper OBJ", ImVec2(w - p, 0))) {
-          SaveGripper();        
+        ImGui::SameLine();
+        if (ImGui::Button("Play")) {
+          Playback();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Next")) {
+          int old = m_currentFrame.load();
+          if (old < pipeline->GetNumFrames() - 1) {
+            m_currentFrame.compare_exchange_weak(old, old + 1);
+          }
+          Invalidate();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Last")) {
+          m_currentFrame = pipeline->GetNumFrames() - 1;
+          Invalidate();
+        }
+      } else {
+        if (ImGui::Button("Stop", ImVec2(w - p, 0))) {
+          StopPlayback();
         }
       }
+
+      ImGui::PopItemWidth();
+      ImGui::PopID();
     }
   }
   if (ImGui::CollapsingHeader("View", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -191,18 +195,32 @@ void MainUI::draw_viewer_menu() {
   }
 }
 
-void MainUI::UpdateVoxels() {
+void MainUI::Invalidate() {
+  if (pipeline == nullptr) return;
+  m_currentFrame = std::min((int)pipeline->GetNumFrames() - 1,
+                            std::max(0, m_currentFrame.load()));
+
+  viewerDataMutex.lock();
+
+  igl::opengl::ViewerData& data = GetViewerData(LayerId::Mesh);
+  data.clear();
+  data.set_mesh(pipeline->GetFrame(m_currentFrame), pipeline->GetFaces());
+
+  viewerDataMutex.unlock();
+}
+
+void MainUI::Update() {
   bool isInit = false;
-  if (voxelPipeline == nullptr) {
-    voxelPipeline.reset(
-        new VoxelPipeline(this, GetMeshVertices(), GetMeshFaces()));
+  if (pipeline == nullptr) {
+    pipeline.reset(new Pipeline(this));
     isInit = true;
   }
 
   // Update using new thread
   auto done = new std::atomic<bool>(false);
   auto task = new std::thread([=] {
-    voxelPipeline->UpdateSettings(voxelSettings, isInit);
+    pipeline->UpdateSettings(settings, isInit);
+    this->Invalidate();
     done->store(true);
   });
   tasks.push_back(
@@ -210,31 +228,65 @@ void MainUI::UpdateVoxels() {
                                std::unique_ptr<std::thread>(task))));
 }
 
-void MainUI::SaveDXF() {
-  std::string filename = igl::file_dialog_save();
-  voxelPipeline->WriteDXF(filename);
+void MainUI::SimulateOnce() {
+  if (pipeline == nullptr || !pipeline->IsReady()) return;
+  // Update using new thread
+  auto done = new std::atomic<bool>(false);
+  auto task = new std::thread([=] {
+    pipeline->Step();
+    done->store(true);
+  });
+  tasks.push_back(
+      std::move(std::make_pair(std::unique_ptr<std::atomic<bool>>(done),
+                               std::unique_ptr<std::thread>(task))));
 }
 
-void MainUI::SaveResult() {
-  std::string filename = igl::file_dialog_save();
-  voxelPipeline->WriteResult(filename);
+void MainUI::SimulateForever() {
+  if (pipeline == nullptr || !pipeline->IsReady()) return;
+  // Update using new thread
+  auto done = new std::atomic<bool>(false);
+  auto task = new std::thread([=] {
+    pipeline->StepForever();
+    done->store(true);
+  });
+  tasks.push_back(
+      std::move(std::make_pair(std::unique_ptr<std::atomic<bool>>(done),
+                               std::unique_ptr<std::thread>(task))));
 }
 
-void MainUI::SaveGripper() {
-  std::string filename = igl::file_dialog_save();
-  voxelPipeline->WriteGripper(filename);
+void MainUI::StopSimulation() {
+  if (pipeline != nullptr) pipeline->Stop();
 }
 
-void MainUI::DrawGrabDirection() {
-  static Eigen::RowVector3d directionColor = Eigen::RowVector3d(1, 0.5, 0);
-  auto& layer = viewer->data(LayerId::GripperDirection);
-  layer.clear_edges();
-  layer.add_edges(Eigen::RowVector3d::Zero(),
-                  GetDirectionFromAngle(voxelSettings.grabAngle)
-                          .cast<double>()
-                          .transpose() *
-                      3,
-                  directionColor);
+void MainUI::ResetSimulation() {
+  if (pipeline == nullptr) return;
+  pipeline->ResetSimulation();
+  Invalidate();
+}
+
+void MainUI::Playback() {
+  if (m_isPlayingBack) return;
+  m_isPlayingBack = true;
+  // Update using new thread
+  auto done = new std::atomic<bool>(false);
+  auto task = new std::thread([this, done] {
+    while (this->m_isPlayingBack &&
+           this->m_currentFrame < pipeline->GetNumFrames()) {
+      this->Invalidate();
+      this->m_currentFrame.fetch_add(1);
+      std::this_thread::sleep_for(std::chrono::microseconds(16));  // 1/60 s
+    }
+    this->Invalidate();
+    this->m_isPlayingBack = false;
+    done->store(true);
+  });
+  tasks.push_back(
+      std::move(std::make_pair(std::unique_ptr<std::atomic<bool>>(done),
+                               std::unique_ptr<std::thread>(task))));
+}
+
+void MainUI::StopPlayback() {
+  m_isPlayingBack = false;
 }
 
 bool MainUI::pre_draw() {
@@ -253,12 +305,4 @@ bool MainUI::post_draw() {
   return false;
 }
 
-bool MainUI::post_load() {
-  meshLoaded = true;
-  meshInfo = MeshInfo(GetMeshVertices(), GetMeshFaces());
-  voxelPipeline.reset();
-  DrawGrabDirection();
-  return true;
-}
-
-}  // namespace gripper
+}  // namespace clothsim

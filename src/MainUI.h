@@ -10,6 +10,9 @@
 #include <thread>
 #include <vector>
 
+#include "Pipeline.h"
+#include "PipelineSettings.h"
+
 namespace clothsim {
 
 enum LayerId {
@@ -24,7 +27,7 @@ enum LayerId {
   Max
 };
 
-class VoxelPipeline;
+class Pipeline;
 
 class MainUI : public igl::opengl::glfw::imgui::ImGuiMenu {
  public:
@@ -34,21 +37,25 @@ class MainUI : public igl::opengl::glfw::imgui::ImGuiMenu {
   void init(igl::opengl::glfw::Viewer* _viewer) override;
   void draw_viewer_window() override;
   void draw_viewer_menu() override;
-  bool post_load() override;
   inline bool pre_draw() override;
   inline bool post_draw() override;
 
-  std::mutex viewerDataMutex;
+  std::recursive_mutex viewerDataMutex;
   inline igl::opengl::ViewerData& GetViewerData(LayerId layerId) {
     return viewer->data(layerId);
   }
 
+  void Invalidate();
+
  private:
-  void UpdateVoxels();
-  void DrawGrabDirection();
-  void SaveDXF();
-  void SaveResult();
-  void SaveGripper();
+  void Update();
+  void SimulateOnce();
+  void SimulateForever();
+  void StopSimulation();
+  void ResetSimulation();
+
+  void Playback();
+  void StopPlayback();
 
   inline Eigen::MatrixXd& GetMeshVertices() {
     return viewer->data(LayerId::Mesh).V;
@@ -57,18 +64,18 @@ class MainUI : public igl::opengl::glfw::imgui::ImGuiMenu {
     return viewer->data(LayerId::Mesh).F;
   }
 
-  // Mesh
-  bool meshLoaded;
-  MeshInfo meshInfo;
-
   // VoxelPipeline
-  std::unique_ptr<VoxelPipeline> voxelPipeline;
-  VoxelPipelineSettings voxelSettings;
+  std::unique_ptr<Pipeline> pipeline;
+  PipelineSettings settings;
 
   // Task
   std::deque<std::pair<std::unique_ptr<std::atomic<bool>>,
                        std::unique_ptr<std::thread>>>
       tasks;
+
+  // Playback
+  std::atomic<bool> m_isPlayingBack;
+  std::atomic<int> m_currentFrame;
 };
 
 }  // namespace gripper
