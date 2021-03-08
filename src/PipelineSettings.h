@@ -10,6 +10,7 @@ struct PipelineSettings {
 
   double timeStep = 0.01;
   double kShear = 250;
+  double kDamping = 0.5;
 };
 
 }  // namespace clothsim

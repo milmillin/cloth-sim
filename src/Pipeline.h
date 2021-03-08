@@ -26,6 +26,7 @@ class Pipeline {
   inline bool IsRunning() const { return m_isRunning; }
   inline void Stop() { m_isRunning = false; }
   inline const Eigen::MatrixXi& GetFaces() const { return m_mesh_F; }
+  inline const Eigen::MatrixXi& GetSprings() const { return m_springs; }
 
   mutable std::mutex historyMutex;
   inline size_t GetNumFrames() const { 
@@ -59,6 +60,7 @@ class Pipeline {
   std::vector<bool> m_bidirectional;
   std::vector<double> m_restLengths;
   std::vector<double> m_shearLengths;
+  Eigen::MatrixXi m_springs;
 
   MatrixRX3d m_X;
   MatrixRX3d m_V;

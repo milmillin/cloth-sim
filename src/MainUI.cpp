@@ -29,17 +29,6 @@ void MainUI::init(igl::opengl::glfw::Viewer* _viewer) {
   }
   viewer->next_data_id = LayerId::Max;
 
-  // Set default point size
-  viewer->data_list[LayerId::CenterOfMass].point_size = 8;
-  viewer->data_list[LayerId::AllContacts].point_size = 8;
-  viewer->data_list[LayerId::FilteredContacts].point_size = 8;
-  viewer->data_list[LayerId::BestContacts].point_size = 8;
-
-  // Set default
-  // viewer->data_list[LayerId::Offset].show_lines = false;
-  // viewer->data_list[LayerId::GripperMesh].show_lines = false;
-  viewer->data_list[LayerId::AllContacts].is_visible = false;
-
   viewer->core().orthographic = true;
 }
 
@@ -86,6 +75,7 @@ void MainUI::draw_viewer_menu() {
     ImGui::InputDouble("Grid Spacing (m)", &settings.gridSpacing, 0.001, 0.01);
     ImGui::InputDouble("Timestep (s)", &settings.timeStep, 0.001, 0.01);
     ImGui::InputDouble("kShear", &settings.kShear, 0.01, 0.1);
+    ImGui::InputDouble("kDamping", &settings.kDamping, 0.01, 0.1);
     ImGui::PopItemWidth();
 
     if (pipeline == nullptr || pipeline->IsReady()) {
@@ -162,34 +152,10 @@ void MainUI::draw_viewer_menu() {
   }
   if (ImGui::CollapsingHeader("View", ImGuiTreeNodeFlags_DefaultOpen)) {
     ImGui::PushID("View");
-    if (ImGui::InputFloat("Point Size",
-                          &(viewer->data(LayerId::CenterOfMass).point_size),
-                          1,
-                          2,
-                          "%.0f")) {
-      viewer->data(LayerId::AllContacts).point_size =
-          viewer->data(LayerId::FilteredContacts).point_size =
-              viewer->data(LayerId::BestContacts).point_size =
-                  viewer->data(LayerId::CenterOfMass).point_size;
-    }
 
     ImGui::Checkbox("Mesh", (bool*)&(viewer->data(LayerId::Mesh).is_visible));
-    ImGui::Checkbox("Offset Mesh",
-                    (bool*)&(viewer->data(LayerId::Offset).is_visible));
-    ImGui::Checkbox(
-        "Gripper Direction",
-        (bool*)&(viewer->data(LayerId::GripperDirection).is_visible));
-    ImGui::Checkbox("Center of Mass",
-                    (bool*)&(viewer->data(LayerId::CenterOfMass).is_visible));
-    ImGui::Checkbox("All Contacts",
-                    (bool*)&(viewer->data(LayerId::AllContacts).is_visible));
-    ImGui::Checkbox(
-        "Filtered Contacts",
-        (bool*)&(viewer->data(LayerId::FilteredContacts).is_visible));
-    ImGui::Checkbox("Best Contacts",
-                    (bool*)&(viewer->data(LayerId::BestContacts).is_visible));
-    ImGui::Checkbox("Gripper",
-                    (bool*)&(viewer->data(LayerId::GripperMesh).is_visible));
+    ImGui::Checkbox("Spring",
+                    (bool*)&(viewer->data(LayerId::Spring).is_visible));
 
     ImGui::PopID();
   }
@@ -202,9 +168,15 @@ void MainUI::Invalidate() {
 
   viewerDataMutex.lock();
 
+  Eigen::MatrixXd V = pipeline->GetFrame(m_currentFrame);
+
   igl::opengl::ViewerData& data = GetViewerData(LayerId::Mesh);
   data.clear();
-  data.set_mesh(pipeline->GetFrame(m_currentFrame), pipeline->GetFaces());
+  data.set_mesh(V, pipeline->GetFaces());
+
+  igl::opengl::ViewerData& spring = GetViewerData(LayerId::Spring);
+  spring.clear();
+  spring.set_edges(V, pipeline->GetSprings(), Eigen::RowVector3d(180, 0, 0));
 
   viewerDataMutex.unlock();
 }

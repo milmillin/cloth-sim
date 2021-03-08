@@ -17,13 +17,7 @@ namespace clothsim {
 
 enum LayerId {
   Mesh = 0,
-  Offset,
-  GripperDirection,
-  CenterOfMass,
-  AllContacts,
-  FilteredContacts,
-  BestContacts,
-  GripperMesh,
+  Spring,
   Max
 };
 

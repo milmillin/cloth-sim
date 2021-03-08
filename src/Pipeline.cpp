@@ -212,13 +212,35 @@ void Pipeline::GenerateGridMesh(const PipelineSettings& settings) {
       for (size_t i = 1; i < cycle.size() - 1; i++) {
         F.push_back(Eigen::RowVector3i(cycle[0], cycle[i], cycle[i + 1]));
       }
-      for (size_t i = 0; i < cycle.size() - 2; i++) {
-        m_shears.push_back({cycle[i], cycle[i + 2]});
-      }
+      // for (size_t i = 0; i < cycle.size() - 2; i++) {
+        // m_shears.push_back({cycle[i], cycle[i + 2]});
+      // }
       if (cycle.size() >= 3) {
+        // Structural
         for (size_t i = 0; i < cycle.size(); i++) {
           m_constraints.push_back(
               std::minmax(cycle[i], cycle[(i + 1) % cycle.size()]));
+        }
+        // Shear
+        for (size_t i = 0; i < cycle.size() - 2; i++) {
+          m_constraints.push_back(
+              std::minmax(cycle[i], cycle[i + 2]));
+        }
+      }
+    }
+
+    // Bending
+    for (int xi = 0; xi < n; xi++) {
+      for (int zi = 0; zi < n - 2; zi++) {
+        int u = index[xi][zi];
+        int v = index[xi][zi + 2];
+        if (u != -1 && v != -1) {
+          m_constraints.push_back(std::minmax(u, v));
+        }
+        int u2 = index[zi][xi];
+        int v2 = index[zi + 2][xi];
+        if (u2 != -1 && v2 != -1) {
+          m_constraints.push_back(std::minmax(u2, v2));        
         }
       }
     }
@@ -278,11 +300,14 @@ void Pipeline::CreateMeshDependentResources() {
 
   m_restLengths.resize(m_constraints.size());
   m_bidirectional.resize(m_constraints.size());
+  m_springs.resize(m_constraints.size(), 2);
   for (size_t i = 0; i < m_constraints.size(); i++) {
     int u = m_constraints[i].first;
     int v = m_constraints[i].second;
     m_bidirectional[i] = dis[u] == dis[v];
     m_restLengths[i] = (m_mesh_V.row(u) - m_mesh_V.row(v)).norm();
+    m_springs(i, 0) = u;
+    m_springs(i, 1) = v;
   }
 
   m_shearLengths.resize(m_shears.size());
@@ -344,16 +369,20 @@ void Pipeline::ComputeAcceleration() {
   m_newA = Eigen::RowVector3d(0, -9.8, 0).replicate(m_X.rows(), 1);
 
   // Shear force
-  for (size_t i = 0; i < m_shears.size(); i++) {
-    int u = m_shears[i].first;
-    int v = m_shears[i].second;
+  for (size_t i = 0; i < m_constraints.size(); i++) {
+    int u = m_constraints[i].first;
+    int v = m_constraints[i].second;
     Eigen::RowVector3d diff = m_X.row(u) - m_X.row(v);
     double norm = diff.norm();
-    double offset = 0.5 * m_settings.kShear * (norm - m_shearLengths[i]) / norm;
+    if (norm < 1e-6) continue;
+    double offset = 0.5 * m_settings.kShear * (norm - m_restLengths[i]) / norm;
     diff *= offset;
     m_newA.row(v) += diff;
     m_newA.row(u) -= diff;
   }
+
+  // Damping
+  m_newA -= m_settings.kDamping * m_V;
 
   // Filter Boundary
 #pragma omp parallel for
@@ -373,6 +402,7 @@ void Pipeline::SatisfyConstraints() {
       Eigen::RowVector3d diff = m_X.row(u) - m_X.row(v);
       double norm = diff.norm();
       double offset = (norm - m_restLengths[i]) / norm;
+      if (norm < 1e-6) continue;
       if (m_bidirectional[i]) {
         diff *= offset / 2;
         m_X.row(v) += diff;
@@ -395,7 +425,11 @@ double Pipeline::ComputeConstraints() {
   for (int64_t i = 0; i < nConstraints; i++) {
     int u = m_constraints[i].first;
     int v = m_constraints[i].second;
-    constraint += abs((m_X.row(u) - m_X.row(v)).norm() - m_restLengths[i]);
+    double curLength = (m_X.row(u) - m_X.row(v)).norm();
+    if (isnan(curLength)) {
+      std::cout << "NaN: " << u << ", " << v << ", " << m_restLengths[i] << "\n";    
+    }
+    constraint += abs(curLength - m_restLengths[i]);
   }
   return constraint;
 }
